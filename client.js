@@ -103,7 +103,7 @@ function joinSession() {
     socket.request('joinRoom', {
         sessionId
     }).then(response => {
-        const msg = 'Joined to session ' + sessionId;
+        let msg = 'Joined to session ' + sessionId;
         console.log(msg);
         console.log('Session ' + sessionId + ' is associated to mediasoup Router with codecs', response.rtpCapabilities);
         log(msg + '. Associated mediasoup Router with codecs ' + JSON.stringify(response.rtpCapabilities.codecs.map(codec => codec.mimeType)));
@@ -114,12 +114,21 @@ function joinSession() {
             if (error.name === 'UnsupportedError')
                 console.error('browser not supported');
         }
-        console.log('Device initialized for %s', device.handlerName);
         device.load({
                 routerRtpCapabilities: response.rtpCapabilities
             })
             .then(() => {
-                console.log('Device successfully loaded. Has RtpCapabilities', device.rtpCapabilities);
+                let canProduce = [];
+                if (device.canProduce('audio')) {
+                    canProduce.push('audio');
+                }
+                if (device.canProduce('video')) {
+                    canProduce.push('video');
+                }
+                msg = 'Client side: device successfully loaded for client ' + device.handlerName + '. Can produce ' + JSON.stringify(canProduce) +
+                    '. Support for codecs ' + JSON.stringify(device.rtpCapabilities.codecs.map(codec => codec.mimeType));
+                console.log(msg);
+                log(msg);
             }).catch(error => {
                 console.error('Error while loading Device', error);
             });
@@ -137,13 +146,6 @@ function publishVideo() {
         let msg = 'Server side: WebRtc Transport created (' + response.transportOptions.id + ')';
         console.log(msg);
         log(msg);
-
-        if (!device.canProduce('audio')) {
-            console.warn('The device cannot produce audio');
-        }
-        if (!device.canProduce('video')) {
-            console.warn('The device cannot produce video');
-        }
 
         const transport = device.createSendTransport(response.transportOptions);
         msg = 'Client side: WebRtc Transport created (' + transport.id + ') with direction "' + transport.direction + '"';
