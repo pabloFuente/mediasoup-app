@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>Mediasoup app</title>
+</head>
+
+<body>
+    <div>
+        <button onclick="myBundle.connectWebSocket()">connectWebSocket</button>
+        <button onclick="myBundle.joinSession()">joinSession</button>
+        <button onclick="myBundle.publishVideo()">publishVideo</button>
+        <button onclick="myBundle.subscribeVideo()">subscribeVideo</button>
+        <button onclick="myBundle.pausePublisher()">pausePublisher</button>
+        <button onclick="myBundle.pauseSubscriber()">pauseSubscriber</button>
+        <button onclick="myBundle.resumePublisher()">resumePublisher</button>
+        <button onclick="myBundle.resumeSubscriber()">resumeSubscriber</button>
+        <button onclick="myBundle.closePublisher()">closePublisher</button>
+        <button onclick="myBundle.closeSubscriber()">closeSubscriber</button>
+        <button onclick="myBundle.publisherStats()">publisherStats</button>
+        <button onclick="myBundle.subscriberStats()">subscriberStats</button>
+    </div>
+    <div>
+        <video id="local-video" autoplay></video>
+        <video id="remote-video" autoplay></video>
+    </div>
+    <div>
+        <textarea id="textarea" style="width: 100%; height: 400px" readonly></textarea>
+    </div>
+</body>
+
+<script type="text/javascript" src="./client-bundle.js"></script>
