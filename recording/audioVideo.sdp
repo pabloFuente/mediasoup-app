@@ -1,0 +1,17 @@
+v=0
+a=group:BUNDLE audio video
+a=group:LS audio video
+m=audio 5678 UDP/TLS/RTP/SAVPF 109 0 8
+c=IN IP4 192.168.0.109
+a=mid:audio
+a=msid:ma ta
+a=recv
+a=rtpmap:109 opus/48000/2
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+m=video 5678 UDP/TLS/RTP/SAVPF 99 120
+c=IN IP4 192.168.0.109
+a=mid:video
+a=msid:ma tb
+a=recv
+a=rtpmap:120 VP8/90000

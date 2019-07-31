@@ -12,20 +12,30 @@
     <div>
         <button onclick="myBundle.connectWebSocket()">connectWebSocket</button>
         <button onclick="myBundle.joinSession()">joinSession</button>
-        <button onclick="myBundle.publishVideo()">publishVideo</button>
-        <button onclick="myBundle.subscribeVideo()">subscribeVideo</button>
-        <button onclick="myBundle.pausePublisher()">pausePublisher</button>
-        <button onclick="myBundle.pauseSubscriber()">pauseSubscriber</button>
-        <button onclick="myBundle.resumePublisher()">resumePublisher</button>
-        <button onclick="myBundle.resumeSubscriber()">resumeSubscriber</button>
+        <button onclick="myBundle.publish()">publish</button>
+        <button onclick="myBundle.subscribe()">subscribe</button>
+        <button onclick="myBundle.pauseVideoPublisher()">pauseVideoPublisher</button>
+        <button onclick="myBundle.pauseAudioPublisher()">pauseAudioPublisher</button>
+        <button onclick="myBundle.pauseVideoSubscriber()">pauseVideoSubscriber</button>
+        <button onclick="myBundle.pauseAudioSubscriber()">pauseAudioSubscriber</button>
+        <button onclick="myBundle.resumeVideoPublisher()">resumeVideoPublisher</button>
+        <button onclick="myBundle.resumeAudioPublisher()">resumeAudioPublisher</button>
+        <button onclick="myBundle.resumeVideoSubscriber()">resumeVideoSubscriber</button>
+        <button onclick="myBundle.resumeAudioSubscriber()">resumeAudioSubscriber</button>
         <button onclick="myBundle.closePublisher()">closePublisher</button>
         <button onclick="myBundle.closeSubscriber()">closeSubscriber</button>
-        <button onclick="myBundle.publisherStats()">publisherStats</button>
-        <button onclick="myBundle.subscriberStats()">subscriberStats</button>
+        <button onclick="myBundle.videoPublisherStats()">videoPublisherStats</button>
+        <button onclick="myBundle.audioPublisherStats()">audioPublisherStats</button>
+        <button onclick="myBundle.videoSubscriberStats()">videoSubscriberStats</button>
+        <button onclick="myBundle.audioSubscriberStats()">audioSubscriberStats</button>
+        <button onclick="myBundle.recordAudio()">recordAudio</button>
+        <button onclick="myBundle.recordVideo()">recordVideo</button>
+        <button onclick="myBundle.recordAudioVideo()">recordAudioVideo</button>
+        <button onclick="myBundle.stopRecord()">stopRecord</button>
     </div>
     <div>
-        <video id="local-video" autoplay></video>
-        <video id="remote-video" autoplay></video>
+        <video id="local-video" style="width: 500px" autoplay muted></video>
+        <video id="remote-video" style="width: 500px" autoplay></video>
     </div>
     <div>
         <textarea id="textarea" style="width: 100%; height: 400px" readonly></textarea>

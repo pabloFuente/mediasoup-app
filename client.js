@@ -4,8 +4,11 @@ const SocketClient = require('socket.io-client');
 const SocketPromise = require('./lib/socket.io-promise').promise;
 
 let device;
-const producers = new Map();
-const consumers = new Map();
+const sessionId = 'TestSession';
+const videoProducers = new Map();
+const audioProducers = new Map();
+const videoConsumers = new Map();
+const audioConsumers = new Map();
 
 function connectWebSocket() {
 
@@ -91,15 +94,9 @@ function connectWebSocket() {
     socket.on('pong', latency => {
         console.log('pong (' + latency + ' ms of latency)');
     });
-
-    /*ws.onmessage = data => {
-        let message = JSON.parse(data.data);
-        handleMessage(message);
-    }*/
 }
 
 function joinSession() {
-    let sessionId = 'TestSession';
     socket.request('joinRoom', {
         sessionId
     }).then(response => {
@@ -138,8 +135,7 @@ function joinSession() {
     })
 }
 
-function publishVideo() {
-    const sessionId = 'TestSession';
+function publish() {
     socket.request('createProducerTransport', {
         sessionId
     }).then(response => {
@@ -222,9 +218,12 @@ function publishVideo() {
 
         // Send webcam video with 3 simulcast streams.
         navigator.mediaDevices.getUserMedia({
-            video: true
+            video: true,
+            audio: true
         }).then(stream => {
             document.getElementById('local-video').srcObject = stream;
+
+            // Video track
             const videoTrack = stream.getVideoTracks()[0];
             transport.produce({
                 track: videoTrack,
@@ -242,13 +241,27 @@ function publishVideo() {
                     videoGoogleStartBitrate: 1000
                 }
             }).then(producer => {
-                producers.set(producer.id, producer);
+                videoProducers.set(producer.id, producer);
 
                 msg = 'Client side: Producer (' + producer.id + ') of kind "' + producer.kind + '" created';
                 console.log(msg);
                 log(msg);
             }).catch(error => {
-                console.error('Error while calling Transport.produce', error);
+                console.error('Error while calling Transport.produce for the video track', error);
+            });
+
+            // Audio track
+            const audioTrack = stream.getAudioTracks()[0];
+            transport.produce({
+                track: audioTrack
+            }).then(producer => {
+                audioProducers.set(producer.id, producer);
+
+                msg = 'Client side: Producer (' + producer.id + ') of kind "' + producer.kind + '" created';
+                console.log(msg);
+                log(msg);
+            }).catch(error => {
+                console.error('Error while calling Transport.produce for the video track', error);
             });
         });
     }).catch(error => {
@@ -256,9 +269,9 @@ function publishVideo() {
     });
 }
 
-function subscribeVideo() {
-    const sessionId = 'TestSession';
-    const producer = producers.values().next().value;
+function subscribe() {
+    const videoProducer = videoProducers.values().next().value;
+    const audioProducer = audioProducers.values().next().value;
 
     socket.request('createConsumerTransport', {
         sessionId
@@ -321,7 +334,8 @@ function subscribeVideo() {
 
         socket.request('consume', {
             sessionId: sessionId,
-            producerId: producer.id,
+            videoProducerId: videoProducer.id,
+            audioProducerId: audioProducer.id,
             rtpCapabilities: device.rtpCapabilities,
             transportId: transport.id
         }).then(response => {
@@ -329,24 +343,45 @@ function subscribeVideo() {
             console.log(msg);
             log(msg);
 
-            transport.consume({
-                    id: response.id,
-                    producerId: response.producerId,
-                    kind: response.kind,
-                    rtpParameters: response.rtpParameters
-                })
-                .then(consumer => {
-                    consumers.set(consumer.id, consumer);
+            const remoteStream = new MediaStream();
 
-                    msg = 'Client side: Consumer (' + consumer.id + ') of kind "' + consumer.kind + '" associated to ' + consumer.producerId + ' created';
+            // Consume video
+            transport.consume({
+                    id: response.video.id,
+                    producerId: response.video.producerId,
+                    kind: response.video.kind,
+                    rtpParameters: response.video.rtpParameters
+                })
+                .then(videoConsumer => {
+                    videoConsumers.set(videoConsumer.id, videoConsumer);
+
+                    msg = 'Client side: VIDEO Consumer (' + videoConsumer.id + ') of kind "' + videoConsumer.kind + '" associated to ' + videoConsumer.producerId + ' created';
                     console.log(msg);
                     log(msg);
 
-                    const remoteStream = new MediaStream();
-                    remoteStream.addTrack(consumer.track);
+                    remoteStream.addTrack(videoConsumer.track);
                     document.getElementById('remote-video').srcObject = remoteStream;
                 }).catch(error => {
-                    console.error('Error while calling Transport.consume', error);
+                    console.error('Error while calling VIDEO Transport.consume', error);
+                });
+
+            // Consume audio
+            transport.consume({
+                    id: response.audio.id,
+                    producerId: response.audio.producerId,
+                    kind: response.audio.kind,
+                    rtpParameters: response.audio.rtpParameters
+                })
+                .then(audioConsumer => {
+                    audioConsumers.set(audioConsumer.id, audioConsumer);
+
+                    msg = 'Client side: AUDIO Consumer (' + audioConsumer.id + ') of kind "' + audioConsumer.kind + '" associated to ' + audioConsumer.producerId + ' created';
+                    console.log(msg);
+                    log(msg);
+
+                    remoteStream.addTrack(audioConsumer.track);
+                }).catch(error => {
+                    console.error('Error while calling AUDIO Transport.consume', error);
                 });
         }).catch(error => {
             console.error('Error calling "consume"', error);
@@ -357,109 +392,255 @@ function subscribeVideo() {
     })
 }
 
-function pausePublisher() {
-    const producer = producers.values().next().value;
+function pauseVideoPublisher() {
+    const videoProducer = videoProducers.values().next().value;
     socket.request('pauseProducer', {
-        producerId: producer.id
+        producerId: videoProducer.id
     }).then(() => {
-        producer.pause();
-        const msg = 'Producer (' + producer.id + ') paused';
+        videoProducer.pause();
+        const msg = 'VIDEO producer (' + videoProducer.id + ') paused';
         console.log(msg);
         log(msg);
     });
 }
 
-function pauseSubscriber() {
-    const consumer = consumers.values().next().value;
+function pauseAudioPublisher() {
+    const audioProducer = audioProducers.values().next().value;
+    socket.request('pauseProducer', {
+        producerId: audioProducer.id
+    }).then(() => {
+        audioProducer.pause();
+        const msg = 'AUDIO producer (' + audioProducer.id + ') paused';
+        console.log(msg);
+        log(msg);
+    });
+}
+
+function pauseVideoSubscriber() {
+    const videoConsumer = videoConsumers.values().next().value;
     socket.request('pauseConsumer', {
-        consumerId: consumer.id
+        consumerId: videoConsumer.id
     }).then(() => {
-        consumer.pause();
-        const msg = 'Consumer (' + consumer.id + ') paused';
+        videoConsumer.pause();
+        const msg = 'VIDEO consumer (' + videoConsumers.id + ') paused';
         console.log(msg);
         log(msg);
     });
 }
 
-function resumePublisher() {
-    const producer = producers.values().next().value;
+function pauseAudioSubscriber() {
+    const audioConsumer = audioConsumers.values().next().value;
+    socket.request('pauseConsumer', {
+        consumerId: audioConsumer.id
+    }).then(() => {
+        audioConsumer.pause();
+        const msg = 'AUDIO consumer (' + audioConsumer.id + ') paused';
+        console.log(msg);
+        log(msg);
+    });
+}
+
+function resumeVideoPublisher() {
+    const videoProducer = videoProducers.values().next().value;
     socket.request('resumeProducer', {
-        producerId: producer.id
+        producerId: videoProducer.id
     }).then(() => {
-        producer.resume();
-        const msg = 'Producer (' + producer.id + ') resumed';
+        videoProducer.resume();
+        const msg = 'VIDEO producer (' + videoProducer.id + ') resumed';
         console.log(msg);
         log(msg);
     });
 }
 
-function resumeSubscriber() {
-    const consumer = consumers.values().next().value;
-    socket.request('resumeConsumer', {
-        consumerId: consumer.id
+function resumeAudioPublisher() {
+    const audioProducer = audioProducers.values().next().value;
+    socket.request('resumeProducer', {
+        producerId: audioProducer.id
     }).then(() => {
-        consumer.resume();
-        const msg = 'Consumer (' + consumer.id + ') resumed';
+        audioProducer.resume();
+        const msg = 'AUDIO producer (' + audioProducer.id + ') resumed';
+        console.log(msg);
+        log(msg);
+    });
+}
+
+function resumeVideoSubscriber() {
+    const videoConsumer = videoConsumers.values().next().value;
+    socket.request('resumeConsumer', {
+        consumerId: videoConsumer.id
+    }).then(() => {
+        videoConsumer.resume();
+        const msg = 'VIDEO Consumer (' + videoConsumer.id + ') resumed';
+        console.log(msg);
+        log(msg);
+    });
+}
+
+function resumeAudioSubscriber() {
+    const audioConsumer = audioConsumers.values().next().value;
+    socket.request('resumeConsumer', {
+        consumerId: audioConsumer.id
+    }).then(() => {
+        audioConsumer.resume();
+        const msg = 'AUDIO Consumer (' + audioConsumer.id + ') resumed';
         console.log(msg);
         log(msg);
     });
 }
 
 function closePublisher() {
-    const producer = producers.values().next().value;
+    const videoProducer = videoProducers.values().next().value;
+    const audioProducer = audioProducers.values().next().value;
     socket.request('closeProducer', {
-        producerId: producer.id
+        producerId: videoProducer.id
     }).then(() => {
-        producer.close();
-        const msg = 'Producer (' + producer.id + ') closed';
+        videoProducer.close();
+        const msg = 'VIDEO producer (' + videoProducer.id + ') closed';
+        console.log(msg);
+        log(msg);
+    });
+    socket.request('closeProducer', {
+        producerId: audioProducer.id
+    }).then(() => {
+        audioProducer.close();
+        const msg = 'AUDIO producer (' + audioProducer.id + ') closed';
         console.log(msg);
         log(msg);
     });
 }
 
 function closeSubscriber() {
-    const consumer = consumers.values().next().value;
+    const videoConsumer = videoConsumers.values().next().value;
+    const audioConsumer = audioConsumers.values().next().value;
     socket.request('closeConsumer', {
-        consumerId: consumer.id
+        consumerId: videoConsumer.id
     }).then(() => {
-        consumer.close();
-        const msg = 'Consumer (' + consumer.id + ') closed';
+        videoConsumer.close();
+        const msg = 'VIDEO Consumer (' + videoConsumer.id + ') closed';
+        console.log(msg);
+        log(msg);
+    });
+    socket.request('closeConsumer', {
+        consumerId: audioConsumer.id
+    }).then(() => {
+        audioConsumer.close();
+        const msg = 'AUDIO Consumer (' + audioConsumer.id + ') closed';
         console.log(msg);
         log(msg);
     });
 }
 
-function publisherStats() {
-    const producer = producers.values().next().value;
+function videoPublisherStats() {
+    const videoProducer = videoProducers.values().next().value;
     socket.request('publisherStats', {
-        producerId: producer.id
+        producerId: videoProducer.id
     }).then(remoteStats => {
-        producer.getStats().then(stats => {
-            console.log('Remote stats for producer ' + producer.id, remoteStats);
+        videoProducer.getStats().then(stats => {
+            console.log('Remote stats for VIDEO producer ' + videoProducer.id, remoteStats);
             let localStats = {};
             for (const [key, value] of stats.entries()) {
                 localStats[key] = value;
             }
-            console.log('Local stats for producer ' + producer.id, localStats);
-            log('Local and remote stats received for producer ' + producer.id + ' (see console)');
+            console.log('Local stats for VIDEO producer ' + videoProducer.id, localStats);
+            log('Local and remote stats received for VIDEO producer ' + videoProducer.id + ' (see console)');
         });
     });
 }
 
-function subscriberStats() {
-    const consumer = consumers.values().next().value;
-    socket.request('subscriberStats', {
-        consumerId: consumer.id
+function audioPublisherStats() {
+    const audioProducer = audioProducers.values().next().value;
+    socket.request('publisherStats', {
+        producerId: audioProducer.id
     }).then(remoteStats => {
-        consumer.getStats().then(stats => {
-            console.log('Remote stats for consumer ' + consumer.id, remoteStats);
+        audioProducer.getStats().then(stats => {
+            console.log('Remote stats for AUDIO producer ' + audioProducer.id, remoteStats);
             let localStats = {};
             for (const [key, value] of stats.entries()) {
                 localStats[key] = value;
             }
-            console.log('Local stats for consumer ' + consumer.id, localStats);
-            log('Local and remote stats received for consumer ' + consumer.id + ' (see console)');
+            console.log('Local stats for AUDIO producer ' + audioProducer.id, localStats);
+            log('Local and remote stats received for AUDIO producer ' + audioProducer.id + ' (see console)');
         });
+    });
+}
+
+function videoSubscriberStats() {
+    const videoConsumer = videoConsumers.values().next().value;
+    socket.request('subscriberStats', {
+        consumerId: videoConsumer.id
+    }).then(remoteStats => {
+        videoConsumer.getStats().then(stats => {
+            console.log('Remote stats for VIDEO consumer ' + videoConsumer.id, remoteStats);
+            let localStats = {};
+            for (const [key, value] of stats.entries()) {
+                localStats[key] = value;
+            }
+            console.log('Local stats for VIDEO consumer ' + videoConsumer.id, localStats);
+            log('Local and remote stats received for VIDEO consumer ' + videoConsumer.id + ' (see console)');
+        });
+    });
+}
+
+function audioSubscriberStats() {
+    const audioConsumer = audioConsumers.values().next().value;
+    socket.request('subscriberStats', {
+        consumerId: audioConsumer.id
+    }).then(remoteStats => {
+        audioConsumer.getStats().then(stats => {
+            console.log('Remote stats for AUDIO consumer ' + audioConsumer.id, remoteStats);
+            let localStats = {};
+            for (const [key, value] of stats.entries()) {
+                localStats[key] = value;
+            }
+            console.log('Local stats for AUDIO consumer ' + audioConsumer.id, localStats);
+            log('Local and remote stats received for AUDIO consumer ' + audioConsumer.id + ' (see console)');
+        });
+    });
+}
+
+function recordAudio() {
+    const audioProducer = audioProducers.values().next().value;
+    socket.request('record', {
+        sessionId,
+        audioProducerId: audioProducer.id,
+        hasAudio: true,
+        hasVideo: false
+    }).then(() => {
+        console.log('Recording started');
+    });
+}
+
+function recordVideo() {
+    const videoProducer = videoProducers.values().next().value;
+    socket.request('record', {
+        sessionId,
+        videoProducerId: videoProducer.id,
+        hasAudio: false,
+        hasVideo: true
+    }).then(() => {
+        console.log('Recording started');
+    });
+}
+
+function recordAudioVideo() {
+    const audioProducer = audioProducers.values().next().value;
+    const videoProducer = audioProducers.values().next().value;
+    socket.request('record', {
+        sessionId,
+        videoProducerId: videoProducer.id,
+        audioProducerId: audioProducer.id,
+        hasAudio: true,
+        hasVideo: true
+    }).then(() => {
+        console.log('Recording started');
+    });
+}
+
+function stopRecord() {
+    socket.request('stopRecord', {
+        sessionId
+    }).then(() => {
+        console.log('Recoding stopped');
     });
 }
 
@@ -473,14 +654,24 @@ function log(text) {
 module.exports = {
     connectWebSocket,
     joinSession,
-    publishVideo,
-    subscribeVideo,
-    pausePublisher,
-    pauseSubscriber,
-    resumePublisher,
-    resumeSubscriber,
+    publish,
+    subscribe,
+    pauseVideoPublisher,
+    pauseAudioPublisher,
+    pauseVideoSubscriber,
+    pauseAudioSubscriber,
+    resumeVideoPublisher,
+    resumeAudioPublisher,
+    resumeVideoSubscriber,
+    resumeAudioSubscriber,
     closePublisher,
     closeSubscriber,
-    publisherStats,
-    subscriberStats
+    videoPublisherStats,
+    audioPublisherStats,
+    videoSubscriberStats,
+    audioSubscriberStats,
+    recordAudio,
+    recordVideo,
+    recordAudioVideo,
+    stopRecord
 };

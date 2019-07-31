@@ -4,10 +4,10 @@ const Express = require('express');
 const Fs = require('fs');
 const Https = require('https');
 const SocketIO = require('socket.io');
-const Ip = require('ip');
 const Colors = require('colors/safe');
+const Spawn = require('child_process').spawn;
+var Kill = require('tree-kill');
 
-console.log('Internal IP is %s', Ip.address());
 
 expressApp = Express();
 expressApp.use(Express.json());
@@ -35,6 +35,27 @@ httpsServer.on('error', (err) => {
 
 httpsServer.listen(SERVER_CONFIG.port, SERVER_CONFIG.ip, () => {
     console.log('Server is running and listening on https://%s:%s', SERVER_CONFIG.ip, SERVER_CONFIG.port);
+
+    // Set internal ip in SDP file
+    var fs = require('fs');
+    const sdpPaths = ['./recording/audioVideo.sdp', './recording/onlyAudio.sdp', './recording/onlyVideo.sdp'];
+    const REGEX = /c=IN IP4 \d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/g;
+    const REPLACEMENT = 'c=IN IP4 ' + SERVER_CONFIG.internalIp;
+
+    sdpPaths.forEach(sdpPath => {
+        fs.readFile(sdpPath, 'utf8', (err, data) => {
+            if (err) {
+                return console.log(err);
+            }
+            const result = data.replace(REGEX, REPLACEMENT);
+            fs.writeFile(sdpPath, result, 'utf8', (err) => {
+                if (err) {
+                    console.error('Error overwriting recording SP file', err);
+                    process.exit(1);
+                }
+            });
+        });
+    });
 });
 
 // A worker represents a mediasoup C++ subprocess that runs in a single CPU core and handles Router instances
@@ -63,6 +84,8 @@ let msConsumer;
 let sessions = new Map();
 // Collection of users (websocket connections)
 let finalUsers = new Map();
+// Collection of recordings
+let recordings = new Map();
 
 const socketServer = SocketIO(httpsServer, {
     serveClient: false,
@@ -106,6 +129,9 @@ socketServer.on('connection', socket => {
                         router: router,
                         users: [socket.id]
                     });
+
+                    console.log(router.rtpCapabilities);
+
                     callback({
                         rtpCapabilities: router.rtpCapabilities
                     });
@@ -189,10 +215,9 @@ socketServer.on('connection', socket => {
 
     socket.on('pauseProducer', async (data, callback) => {
         const producer = finalUsers.get(socket.id).producers.get(data.producerId);
-        if (producer.paused) {
-            return;
+        if (!producer.paused) {
+            producer.pause();
         }
-        producer.pause();
         callback();
     });
 
@@ -251,89 +276,96 @@ socketServer.on('connection', socket => {
 
     socket.on('consume', async (data, callback) => {
         const sessionRouter = sessions.get(data.sessionId).router;
+        const videoProducerId = data.videoProducerId;
+        const audioProducerId = data.audioProducerId;
         if (!sessionRouter.canConsume({
-                producerId: data.producerId,
+                producerId: data.videoProducerId,
                 rtpCapabilities: data.rtpCapabilities
             })) {
-            console.error('Can NOT consume');
+            console.error('Can NOT consume video');
+            return;
+        }
+        if (!sessionRouter.canConsume({
+                producerId: data.audioProducerId,
+                rtpCapabilities: data.rtpCapabilities
+            })) {
+            console.error('Can NOT consume audio');
             return;
         }
         let consumerTransport = finalUsers.get(socket.id).consumerTransports.get(data.transportId);
         consumerTransport.consume({
-            producerId: data.producerId,
+            producerId: videoProducerId,
             rtpCapabilities: data.rtpCapabilities,
             paused: false
-        }).then(consumer => {
-            console.log('mediasoup Consumer initialized for user %s for Producer %s. {kind: %s, type: %s}', socket.id, consumer.producerId, consumer.kind, consumer.type);
-            finalUsers.get(socket.id).consumers.set(consumer.id, consumer);
+        }).then(videoConsumer => {
+            console.log('mediasoup VIDEO Consumer initialized for user %s for Producer %s. {kind: %s, type: %s}', socket.id, videoConsumer.producerId, videoConsumer.kind, videoConsumer.type);
+            finalUsers.get(socket.id).consumers.set(videoConsumer.id, videoConsumer);
+            consumerTransport.consume({
+                producerId: audioProducerId,
+                rtpCapabilities: data.rtpCapabilities,
+                paused: false
+            }).then(audioConsumer => {
+                console.log('mediasoup AUDIO Consumer initialized for user %s for Producer %s. {kind: %s, type: %s}', socket.id, audioConsumer.producerId, audioConsumer.kind, audioConsumer.type);
+                finalUsers.get(socket.id).consumers.set(audioConsumer.id, audioConsumer);
 
-            consumer.on('transportclose', () => {
+                const response = {
+                    video: {
+                        id: videoConsumer.id,
+                        producerId: videoConsumer.producerId,
+                        kind: videoConsumer.kind,
+                        rtpParameters: videoConsumer.rtpParameters,
+                        type: videoConsumer.type,
+                        paused: videoConsumer.producerPaused
+                    },
+                    audio: {
+                        id: audioConsumer.id,
+                        producerId: audioConsumer.producerId,
+                        kind: audioConsumer.kind,
+                        rtpParameters: audioConsumer.rtpParameters,
+                        type: audioConsumer.type,
+                        paused: audioConsumer.producerPaused
+                    }
+                };
 
-            });
-            consumer.on('producerclose', () => {
-
-            });
-            consumer.on('producerpause', () => {
-
-            });
-            consumer.on('producerresume', () => {
-
-            });
-            consumer.on('score', () => {
-
-            });
-            consumer.on('layerschange', () => {
-
-            });
-
-            const response = {
-                id: consumer.id,
-                producerId: consumer.producerId,
-                kind: consumer.kind,
-                rtpParameters: consumer.rtpParameters,
-                type: consumer.type,
-                paused: consumer.producerPaused
-            };
-
-            if (consumer.type === 'simulcast' || consumer.type === 'svc') {
-                consumer.setPreferredLayers({
-                    spatialLayer: 2,
-                    temporalLayer: 2
-                }).then(() => {
+                if (videoConsumer.type === 'simulcast' || videoConsumer.type === 'svc') {
+                    videoConsumer.setPreferredLayers({
+                        spatialLayer: 2,
+                        temporalLayer: 2
+                    }).then(() => {
+                        callback(response);
+                    });
+                } else {
                     callback(response);
-                });
-            } else {
-                callback(response);
-            }
+                }
+            }).catch(error => {
+                console.error('Error consuming audio', error);
+            });
         }).catch(error => {
-            console.error('Error consuming', error);
+            console.error('Error consuming video', error);
         });
     });
 
     socket.on('pauseConsumer', async (data, callback, errback) => {
         const consumer = finalUsers.get(socket.id).consumers.get(data.consumerId);
-        if (consumer.paused) {
-            return;
+        if (!consumer.paused) {
+            consumer.pause();
         }
-        consumer.pause();
         callback();
     });
 
     socket.on('resumeConsumer', async (data, callback) => {
         const consumer = finalUsers.get(socket.id).consumers.get(data.consumerId);
-        if (!consumer.paused) {
-            return;
+        if (consumer.paused) {
+            consumer.resume();
         }
-        consumer.resume();
         callback();
     });
 
     socket.on('closeConsumer', async (data, callback) => {
         const consumer = finalUsers.get(socket.id).consumers.get(data.consumerId);
-        if (consumer.closed) {
-            return;
+        if (!consumer.closed) {
+            consumer.close();
         }
-        consumer.close();
         callback();
     });
 
@@ -348,6 +380,154 @@ socketServer.on('connection', socket => {
         const consumer = finalUsers.get(socket.id).consumers.get(data.consumerId);
         consumer.getStats().then(stats => {
             callback(stats);
+        });
+    });
+
+    /**
+     * Recording stuff
+     */
+
+    let stopRecordingCallbackFunction;
+    const stopRecordingCallback = () => {
+        if (!!stopRecordingCallbackFunction) {
+            stopRecordingCallbackFunction();
+        }
+    }
+
+    socket.on('record', async (data, callback) => {
+
+        let sdpFile;
+        let outputFile;
+        const hasAudio = data.hasAudio;
+        const hasVideo = data.hasVideo;
+        const audioProducerId = data.audioProducerId;
+        const videoProducerId = data.videoProducerId;
+        if (hasAudio) {
+            if (hasVideo) {
+                sdpFile = __dirname + '/recording/audioVideo.sdp';
+                outputFile = __dirname + '/recording/recording.mp4';
+            } else {
+                sdpFile = __dirname + '/recording/onlyAudio.sdp';
+                outputFile = __dirname + '/recording/recording.mp3';
+            }
+        } else if (hasVideo) {
+            sdpFile = __dirname + '/recording/onlyVideo.sdp';
+            outputFile = __dirname + '/recording/recording.mp4';
+        }
+
+        const sessionId = data.sessionId;
+        if (!recordings.get(sessionId)) {
+            recordings.set(sessionId, {
+                ffmpegProcess: undefined,
+                transports: [],
+                consumers: []
+            });
+        }
+
+        let ffmpegStarted = false;
+        let recordingStarted = false;
+
+        ffmpegProcess = Spawn('ffmpeg', ['-protocol_whitelist', 'file,udp,rtp', '-i', sdpFile, outputFile], {
+            detached: true
+        });
+
+        ffmpegProcess.on('exit', (code, signal) => {
+            console.log('Recording process exited with ' + `code ${code} and signal ${signal}`);
+            if (!signal) {
+                console.log('Recording successfully stopped');
+            } else {
+                console.error('Error stopping recording');
+            }
+            if (!!stopRecordingCallback) {
+                stopRecordingCallback();
+            }
+        });
+
+        ffmpegProcess.on('disconnect', () => {
+            console.log('Recording process disconnect');
+        });
+
+        ffmpegProcess.on('error', error => {
+            console.log('Recording process error', error);
+        });
+
+        ffmpegProcess.on('close', () => {
+            console.log('Recording process closed');
+        });
+
+        ffmpegProcess.on('message', () => {
+            console.log('Recording process message');
+        });
+
+        ffmpegProcess.stderr.on('data', data => {
+            console.log(data.toString());
+            if (data.toString().startsWith('ffmpeg version') && !ffmpegStarted) {
+                ffmpegStarted = true;
+
+                const sessionRouter = sessions.get(sessionId).router;
+                sessionRouter.createPlainRtpTransport(SERVER_CONFIG.mediasoup.plainRtpTransport)
+                    .then(plainRtpTransport => {
+
+                        recordings.get(sessionId).transports.push(plainRtpTransport);
+
+                        plainRtpTransport.connect({
+                            ip: SERVER_CONFIG.mediasoup.plainRtpTransport.listenIp.ip,
+                            port: 5678
+                        }).then(() => {
+                            console.log('PlainRtpTransport connected');
+
+                            if (hasAudio) {
+                                plainRtpTransport.consume({
+                                    producerId: audioProducerId,
+                                    rtpCapabilities: sessionRouter.rtpCapabilities,
+                                    paused: false
+                                }).then(consumer => {
+                                    recordings.get(sessionId).consumers.push(consumer);
+                                    console.log('PlainRtpTransport consuming AUDIO');
+                                }).catch(error => {
+                                    console.error(error);
+                                });
+                            }
+                            if (hasVideo) {
+                                plainRtpTransport.consume({
+                                    producerId: videoProducerId,
+                                    rtpCapabilities: sessionRouter.rtpCapabilities,
+                                    paused: false
+                                }).then(consumer => {
+                                    recordings.get(sessionId).consumers.push(consumer);
+                                    console.log('PlainRtpTransport consuming VIDEO');
+                                }).catch(error => {
+                                    console.error(error);
+                                });
+                            }
+
+                        }).catch(error => {
+                            console.error(error);
+                        });
+                    })
+                    .catch(error => {
+                        console.log(error)
+                    });
+            } else if (data.toString().startsWith('frame=') && !recordingStarted) {
+                recordingStarted = true;
+                callback();
+            }
+        });
+
+        recordings.get(sessionId).ffmpegProcess = ffmpegProcess;
+    });
+
+    socket.on('stopRecord', async (data, callback) => {
+        stopRecordingCallbackFunction = callback;
+        const recording = recordings.get(data.sessionId);
+        recording.consumers[0].close();
+        recording.transports[0].close();
+        Kill(recording.ffmpegProcess.pid, error => {
+            if (error) {
+                console.error('Error stopping ffmpeg process');
+            } else {
+                console.error('ffmpeg process successfully stopped');
+            }
         });
     });
 
@@ -389,7 +569,7 @@ function createWebRtcTransport(router) {
     return new Promise((resolve, reject) => {
         let webrtcConfig = SERVER_CONFIG.mediasoup.webRtcTransport;
         webrtcConfig['listenIps'] = [{
-            ip: Ip.address(),
+            ip: SERVER_CONFIG.internalIp,
             announcedIp: null
         }];
         router.createWebRtcTransport(webrtcConfig)
