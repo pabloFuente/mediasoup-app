@@ -315,7 +315,7 @@ socketServer.on('connection', socket => {
                         kind: videoConsumer.kind,
                         rtpParameters: videoConsumer.rtpParameters,
                         type: videoConsumer.type,
-                        paused: videoConsumer.producerPaused
+                        paused: videoConsumer.producerPaused,
                     },
                     audio: {
                         id: audioConsumer.id,
@@ -328,9 +328,32 @@ socketServer.on('connection', socket => {
                 };
 
                 if (videoConsumer.type === 'simulcast' || videoConsumer.type === 'svc') {
+
+                    const scalabilityMode = videoConsumer.rtpParameters.encodings[0].scalabilityMode;
+                    console.log('Scalability mode for video consumer: ' + scalabilityMode);
+                    const {
+                        spatialLayers,
+                        temporalLayers
+                    } = MediaSoup.parseScalabilityMode(scalabilityMode);
+
+                    const firstSpatialLayer = spatialLayers - 1;
+                    const firstTemporalLayer = temporalLayers - 1;
+
+                    response['currentLayers'] = {
+                        spatialLayer: firstSpatialLayer,
+                        temporalLayer: firstTemporalLayer
+                    };
+
+                    videoConsumer.on('layerschange', layers => {
+                        console.log('LAYERS CHANGED', layers);
+                    });
+
+                    console.log('Setting simulcast video consumer to use spatial layer ' + firstSpatialLayer + ' and temporal layer ' + firstTemporalLayer);
+
+                    // Max quality
                     videoConsumer.setPreferredLayers({
-                        spatialLayer: 2,
-                        temporalLayer: 2
+                        spatialLayer: firstSpatialLayer,
+                        temporalLayer: firstTemporalLayer
                     }).then(() => {
                         callback(response);
                     });
@@ -372,15 +395,37 @@ socketServer.on('connection', socket => {
     socket.on('publisherStats', async (data, callback) => {
         const producer = finalUsers.get(socket.id).producers.get(data.producerId);
         producer.getStats().then(stats => {
-            callback(stats);
+            callback({
+                stats,
+                score: producer.score,
+                encodings: producer.rtpParameters.encodings,
+            });
         });
     });
 
     socket.on('subscriberStats', async (data, callback) => {
         const consumer = finalUsers.get(socket.id).consumers.get(data.consumerId);
         consumer.getStats().then(stats => {
-            callback(stats);
+            callback({
+                stats,
+                currentLayers: consumer.currentLayers,
+                encodings: consumer.rtpParameters.encodings,
+                score: consumer.score
+            });
         });
+    });
+
+    socket.on('changeSimulcast', async (data, callback) => {
+        const consumer = finalUsers.get(socket.id).consumers.get(data.consumerId);
+        console.log('Current layers', consumer.currentLayers);
+        console.log('Preferred layters to ' + data.spatialLayer + ' - ' + data.temporalLayer);
+        consumer.setPreferredLayers({
+                spatialLayer: data.spatialLayer,
+                temporalLayer: data.temporalLayer
+            }).then(() => {
+                callback();
+            })
+            .catch(error => console.error(error));
     });
 
     /**

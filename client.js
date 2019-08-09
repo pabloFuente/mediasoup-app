@@ -228,13 +228,16 @@ function publish() {
             transport.produce({
                 track: videoTrack,
                 encodings: [{
-                        maxBitrate: 100000
+                        maxBitrate: 180000,
+                        scaleResolutionDownBy: 4
                     },
                     {
-                        maxBitrate: 300000
+                        maxBitrate: 360000,
+                        scaleResolutionDownBy: 2
                     },
                     {
-                        maxBitrate: 900000
+                        maxBitrate: 1500000,
+                        scaleResolutionDownBy: 1
                     }
                 ],
                 codecOptions: {
@@ -343,6 +346,9 @@ function subscribe() {
             console.log(msg);
             log(msg);
 
+            document.getElementById('spatial-layer').value = response.currentLayers.spatialLayer;
+            document.getElementById('temporal-layer').value = response.currentLayers.temporalLayer;
+
             const remoteStream = new MediaStream();
 
             // Consume video
@@ -353,6 +359,14 @@ function subscribe() {
                     rtpParameters: response.video.rtpParameters
                 })
                 .then(videoConsumer => {
+
+                    const {
+                        spatialLayers,
+                        temporalLayers
+                    } = MediasoupClient.parseScalabilityMode(videoConsumer.rtpParameters.encodings[0].scalabilityMode);
+
+                    console.log('SIMULCAST: ' + spatialLayers + ' - ' + temporalLayers);
+
                     videoConsumers.set(videoConsumer.id, videoConsumer);
 
                     msg = 'Client side: VIDEO Consumer (' + videoConsumer.id + ') of kind "' + videoConsumer.kind + '" associated to ' + videoConsumer.producerId + ' created';
@@ -644,6 +658,19 @@ function stopRecord() {
     });
 }
 
+function changeSimulcast() {
+    const videoConsumer = videoConsumers.values().next().value;
+    const spatialLayer = document.getElementById('spatial-layer').value;
+    const temporalLayer = document.getElementById('temporal-layer').value;
+    socket.request('changeSimulcast', {
+        consumerId: videoConsumer.id,
+        spatialLayer: parseInt(spatialLayer),
+        temporalLayer: parseInt(temporalLayer)
+    }).then(() => {
+        console.log('Simulcast layer changed');
+    });
+}
+
 
 function log(text) {
     const previousLog = document.getElementById('textarea').value;
@@ -673,5 +700,6 @@ module.exports = {
     recordAudio,
     recordVideo,
     recordAudioVideo,
-    stopRecord
+    stopRecord,
+    changeSimulcast
 };
