@@ -19,7 +19,7 @@
     "mediasoup-client": "3.2.0",
     "socket.io": "2.2.0",
     "socket.io-client": "2.2.0",
-    "tree-kill": "^1.2.1"
+    "tree-kill": "^1.2.2"
   },
   "optionalDependencies": {
     "bufferutil": "4.0.1",
